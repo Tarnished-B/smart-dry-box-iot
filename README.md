@@ -21,16 +21,24 @@ Dự án này được build chủ yếu để vọc vạch kết nối phần c
 Nếu bạn muốn tải về chạy thử, hãy làm theo các bước sau:
 
 1. Clone repo này về máy:
+
 ```bash
-git clone [https://github.com/Tarnished-B/smart-dry-box-iot.git](https://github.com/Tarnished-B/smart-dry-box-iot.git)
+git clone https://github.com/Tarnished-B/smart-dry-box-iot.git
 ```
+
 2. Cài đặt thư viện:
+
 ```bash
 npm install
 ```
-3. Tạo một file tên là .env ở thư mục gốc (ngang hàng với package.json) và điền các API Key của bạn vào (Firebase, Weather, Gemini...). Lưu ý: repo này không chứa API Key thật để bảo mật.
+
+3. Tạo một file tên là `.env` ở thư mục gốc (ngang hàng với `package.json`) và điền các API Key của bạn vào (Firebase, Weather, Gemini...). *Lưu ý: repo này không chứa API Key thật để bảo mật.*
+
 4. Khởi chạy dự án:
+
 ```bash
 npm run dev
 ```
-Dự án cá nhân vọc vạch cuối tuần. Cảm ơn các bạn đã ghé xem! ✌️
+
+---
+*Dự án cá nhân vọc vạch cuối tuần. Cảm ơn các bạn đã ghé xem!* ✌️
