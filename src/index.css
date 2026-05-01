@@ -1,0 +1,42 @@
+@import "tailwindcss";
+
+body {
+  background-color: #050505;
+  color: #e5e5e5;
+  font-family: "Be Vietnam Pro", ui-sans-serif, system-ui, -apple-system, sans-serif;
+}
+
+/* ─── Smooth color transition CHỈ khi đang đổi theme ───
+   Class .theme-transitioning được gắn vào <html> trong 700ms khi toggle theme,
+   sau đó xoá ngay → hover effects vẫn nhanh như cũ. */
+html.theme-transitioning *,
+html.theme-transitioning *::before,
+html.theme-transitioning *::after {
+  transition-property: color, background-color, border-color, box-shadow, opacity !important;
+  transition-duration: 700ms !important;
+  transition-timing-function: ease-in-out !important;
+}
+
+@keyframes slideFromRight {
+  from { opacity: 0; transform: translateX(48px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+@keyframes slideFromLeft {
+  from { opacity: 0; transform: translateX(-48px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+.slide-from-right { animation: slideFromRight 0.35s cubic-bezier(0.25,0.46,0.45,0.94) both; }
+.slide-from-left  { animation: slideFromLeft  0.35s cubic-bezier(0.25,0.46,0.45,0.94) both; }
+
+@keyframes chartDotSlide {
+  from {
+    transform: translate(var(--chart-dot-start-x, 0), var(--chart-dot-start-y, 0));
+  }
+  to {
+    transform: translate(0, 0);
+  }
+}
+
+.animate-chart-dot-slide {
+  animation: chartDotSlide 0.9s cubic-bezier(0.16, 1, 0.3, 1) 80ms both;
+}
