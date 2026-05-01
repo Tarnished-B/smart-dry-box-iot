@@ -28,8 +28,9 @@ git clone [https://github.com/Tarnished-B/smart-dry-box-iot.git](https://github.
 ```bash
 npm install
 ```
-4. Tạo một file tên là .env ở thư mục gốc (ngang hàng với package.json) và điền các API Key của bạn vào (Firebase, Weather, Gemini...). Lưu ý: repo này không chứa API Key thật để bảo mật.
-
-5. Khởi chạy dự án:
+3. Tạo một file tên là .env ở thư mục gốc (ngang hàng với package.json) và điền các API Key của bạn vào (Firebase, Weather, Gemini...). Lưu ý: repo này không chứa API Key thật để bảo mật.
+4. Khởi chạy dự án:
+```bash
 npm run dev
+```
 Dự án cá nhân vọc vạch cuối tuần. Cảm ơn các bạn đã ghé xem! ✌️
