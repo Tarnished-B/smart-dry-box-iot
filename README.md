@@ -26,7 +26,7 @@ Other details:
 ```mermaid
 flowchart LR
     S[AHT20] -- I2C --> E[ESP8266]
-    E -- PWM / GPIO --> A[Fan via MOSFET, 2 servo vents, heater relay]
+    E -- PWM / GPIO --> A[Fan via MOSFET and 5V to 12V Boost Module, 2 servo vents, heater via MOSFET Module]
     E -- WiFi --> F[(Firebase Realtime DB)]
     F --> D[Web dashboard]
 ```
