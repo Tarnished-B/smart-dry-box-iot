@@ -2,7 +2,7 @@ import { initializeApp } from "firebase/app";
 import { getDatabase } from "firebase/database";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyC06HthBsgaB3g_LaA-IPG09UhuUjLi-fk",
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
   authDomain: "smart-dry-box-9333e.firebaseapp.com",
   databaseURL: "https://smart-dry-box-9333e-default-rtdb.asia-southeast1.firebasedatabase.app",
   projectId: "smart-dry-box-9333e",

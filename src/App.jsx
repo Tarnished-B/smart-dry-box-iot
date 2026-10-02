@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
-import { ref, onValue, query, limitToLast } from 'firebase/database';
+import { ref, onValue, query, limitToLast, get, orderByChild, push, remove } from 'firebase/database';
 import { database } from './firebase';
 import { ComposedChart, Line, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import DeviceTab from './DeviceTab';
 import toast, { Toaster } from 'react-hot-toast';
-import { Bell, Flame, Wind, Info, AlertTriangle, Droplets, Activity } from 'lucide-react';
+import { Bell, Flame, Wind, Info, AlertTriangle, Droplets, Activity, Fan, ThermometerSun, DoorOpen, DoorClosed } from 'lucide-react';
 
 // --- CUSTOM HOOK: Hiệu ứng đếm số chạy mượt mà ---
 function useAnimatedNumber(value, duration = 1000) {
@@ -68,6 +68,7 @@ function ConnectionBadge({ lastSync, isDark }) {
   );
 }
 
+
 function App() {
   const [data, setData] = useState({ isLoaded: false, NhietDo: 0, DoAm: 0, Devices: { Quat: false, TamHutAm: false, VachNganNgoai: false, VachNganTrong: false }, System: { Hop: 1, TrangThaiCamBien: true, LastSync: 0 } });
   const [activeTab, setActiveTab] = useState(0);
@@ -80,6 +81,14 @@ function App() {
     return localStorage.getItem('dashboard-unread') === 'true';
   });
   const dropdownRef = useRef(null);
+  const lastErrorLogged = useRef({ sensor: true, temp: false }); // Để tránh ghi log lặp lại liên tục
+  const prevStateRef = useRef(null); // Theo dõi trạng thái phần cứng trước đó
+  const showLogsRef = useRef(showLogs); // Dùng ref để listener không bị reset khi đóng/mở chuông
+  const latestLogIdRef = useRef(null); // Lưu ID bản ghi mới nhất để so sánh
+
+  useEffect(() => {
+    showLogsRef.current = showLogs;
+  }, [showLogs]);
 
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -110,68 +119,93 @@ function App() {
   }, [hasUnreadLogs]);
 
   useEffect(() => {
-    if (data.System.TrangThaiCamBien === false) {
+    if (data.System.TrangThaiCamBien === false && lastErrorLogged.current.sensor !== false) {
       toast.error('Lỗi Cảm Biến: Mất kết nối hoặc hỏng cảm biến!', { id: 'sensor-error' });
+      lastErrorLogged.current.sensor = false;
+    } else if (data.System.TrangThaiCamBien === true) {
+      lastErrorLogged.current.sensor = true;
     }
-    if (data.NhietDo > 50) {
+
+    if (data.NhietDo > 50 && !lastErrorLogged.current.temp) {
       toast.error(`CẢNH BÁO: Nhiệt độ quá cao (${data.NhietDo}°C)!`, { id: 'temp-error' });
+      lastErrorLogged.current.temp = true;
+    } else if (data.NhietDo <= 50) {
+      lastErrorLogged.current.temp = false;
     }
   }, [data.System.TrangThaiCamBien, data.NhietDo]);
 
   useEffect(() => {
-    const logsQuery = query(ref(database, 'DryBox/SystemLogs'), limitToLast(30));
-    const unsubscribe = onValue(
-      logsQuery,
-      (snapshot) => {
-        const raw = snapshot.val();
-        if (!raw) {
-          setLogs([]);
-          return;
+    if (!data.isLoaded) return;
+
+    // Chỉ cập nhật trạng thái cũ để theo dõi thay đổi (nếu cần dùng cho logic khác ở frontend)
+    // Việc ghi log đã được Cloud Functions đảm nhận 24/7
+    prevStateRef.current = JSON.parse(JSON.stringify(data));
+  }, [data]);
+
+  useEffect(() => {
+    // Truy vấn 100 bản ghi mới nhất. Việc dọn dẹp đã được chuyển xuống Cloud Functions.
+    const logsQuery = query(ref(database, 'logs'), orderByChild('timestamp'), limitToLast(100));
+
+    const unsubscribe = onValue(logsQuery, (snapshot) => {
+      if (!snapshot.exists()) {
+        setLogs([]);
+        return;
+      }
+
+      const raw = snapshot.val();
+      const entries = Object.entries(raw);
+
+      // Chuyển đổi và mapping dữ liệu cho giao diện
+      const nextLogs = entries.map(([id, item]) => {
+        const msg = String(item?.message || item?.action || item?.text || '').trim();
+        const ts = Number(item?.timestamp) || 0;
+        if (!msg) return null;
+
+        const lowMsg = msg.toLowerCase();
+        // Ưu tiên dùng type từ Cloud Function, nếu không có mới tự đoán (cho log cũ)
+        let type = item?.type;
+        if (!type) {
+          type = (lowMsg.includes('sấy') || (lowMsg.includes('hút ẩm') && !lowMsg.includes('chờ'))) ? 'mode_dry'
+            : (lowMsg.includes('quạt') || lowMsg.includes('tản nhiệt')) ? 'mode_cool'
+              : (lowMsg.includes('lỗi') || lowMsg.includes('error')) ? 'error'
+                : 'info';
         }
 
-        const nextLogs = Object.entries(raw)
-          .map(([id, item]) => {
-            const action = String(item?.action || '').trim();
-            const ts = Number(item?.timestamp) || 0;
-            if (!action) return null;
+        return {
+          id,
+          type,
+          title: msg,
+          message: 'Hệ thống Smart Dry Box',
+          time: ts > 0 ? new Date(ts).toLocaleTimeString('vi-VN') : '--:--',
+          timestamp: ts || id
+        };
+      })
+        .filter(Boolean)
+        .sort((a, b) => {
+          if (b.timestamp !== a.timestamp) return b.timestamp - a.timestamp;
+          return String(b.id).localeCompare(String(a.id));
+        });
 
-            const lowAction = action.toLowerCase();
-            const type = lowAction.includes('hút ẩm')
-              ? 'dry'
-              : lowAction.includes('quạt') || lowAction.includes('tản nhiệt')
-                ? 'cool'
-                : lowAction.includes('lỗi') || lowAction.includes('error')
-                  ? 'error'
-                  : 'info';
+      setLogs(nextLogs);
 
-            const time = ts > 0
-              ? new Date(ts).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-              : '--:--:--';
+      // CHỈ BÁO ĐỎ NẾU CÓ BẢN GHI MỚI THỰC SỰ (so sánh ID bản ghi trên cùng)
+      if (nextLogs.length > 0) {
+        const newestId = nextLogs[0].id;
 
-            return {
-              id,
-              type,
-              title: action,
-              message: 'Đồng bộ từ Firebase Realtime Database',
-              time,
-              timestamp: ts
-            };
-          })
-          .filter(Boolean)
-          .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
-
-        setLogs(nextLogs);
-        if (nextLogs.length > 0 && !showLogs) {
+        // Nếu bản ghi trên cùng khác với ID cũ và chuông đang đóng -> Hiện đốm đỏ
+        if (latestLogIdRef.current && newestId !== latestLogIdRef.current && !showLogsRef.current) {
           setHasUnreadLogs(true);
         }
-      },
-      (error) => {
-        console.error('Không thể lắng nghe /DryBox/SystemLogs:', error);
+
+        // Cập nhật ID mới nhất
+        latestLogIdRef.current = newestId;
       }
-    );
+    }, (error) => {
+      console.error('Lỗi listener logs:', error);
+    });
 
     return () => unsubscribe();
-  }, [showLogs]);
+  }, []); // Chạy duy nhất 1 lần khi khởi tạo App
 
   useEffect(() => {
     const dryBoxRef = ref(database, 'DryBox');
@@ -187,8 +221,9 @@ function App() {
 
         // Tăng lên 30 điểm dữ liệu cho Chart mượt và dày đặc hơn
         setHistory(prev => {
+          const nowMs = Date.now();
           if (prev.length > 0 && prev[prev.length - 1].time === timeStr) return prev;
-          return [...prev, { time: timeStr, temp: temp, hum: hum }].slice(-30);
+          return [...prev, { time: timeStr, temp: temp, hum: hum, timestamp: nowMs }].slice(-30);
         });
       }
     });
@@ -254,76 +289,93 @@ function App() {
 
               {/* LOG DROPDOWN — VERTICAL TIMELINE */}
               {showLogs && (
-                <div className={`absolute top-full right-0 md:right-0 -mr-16 sm:mr-0 mt-3 w-[90vw] sm:w-96 rounded-2xl border backdrop-blur-2xl shadow-2xl
-                  ${isDarkMode ? 'bg-[#050014]/90 border-white/10 text-white' : 'bg-white/90 border-slate-200 text-slate-800'}`}>
-
-                  {/* CARET POINTER */}
-                  <div className={`absolute -top-1.5 right-[72px] sm:right-[14px] w-3 h-3 rotate-45 border-t border-l 
-                    ${isDarkMode ? 'bg-[#050014] border-white/10' : 'bg-white border-slate-200'}`}
+                <div
+                  ref={dropdownRef}
+                  className={`fixed md:absolute top-[54px] md:top-full left-4 right-4 md:left-auto md:right-[-5px] md:w-96 z-50 mt-3 rounded-3xl shadow-2xl border animate-in fade-in zoom-in duration-200
+                  ${isDarkMode ? 'bg-slate-900/95 border-white/10 backdrop-blur-xl' : 'bg-white/95 border-slate-200 backdrop-blur-xl'}`}
+                >
+                  {/* Arrow Caret - Hiện trên cả mobile và desktop, trỏ vào chuông */}
+                  <div className={`absolute -top-1.5 right-[61px] md:right-[18px] w-3 h-3 rotate-45 border-t border-l
+                    ${isDarkMode ? 'bg-slate-900 border-white/10' : 'bg-white border-slate-200'}`}
                   />
 
-                  {/* HEADER */}
-                  <div className={`flex items-center justify-between px-4 pt-4 pb-3 border-b ${isDarkMode ? 'border-white/10' : 'border-slate-100'}`}>
-                    <h3 className="text-[10px] font-black uppercase tracking-[0.4em] opacity-60">Nhật Ký Hệ Thống</h3>
-                    <div />
-                  </div>
+                  <div className="overflow-hidden rounded-3xl">
+                    {/* HEADER */}
+                    <div className={`flex items-center justify-between px-4 pt-4 pb-3 border-b ${isDarkMode ? 'border-white/10' : 'border-slate-100'}`}>
+                      <h3 className="text-[10px] font-black uppercase tracking-[0.4em] opacity-60">Nhật Ký Hệ Thống</h3>
+                      <div />
+                    </div>
 
-                  {/* TIMELINE SCROLL AREA */}
-                  <div
-                    className="px-4 pt-4 pb-4 max-h-[26rem] overflow-y-auto"
-                    style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
-                  >
-                    {logs.length === 0 ? (
-                      <div className="flex flex-col items-center gap-3 py-8 opacity-40">
-                        <Activity size={28} />
-                        <p className="text-xs font-bold uppercase tracking-widest">Chưa có hoạt động nào</p>
-                      </div>
-                    ) : (
-                      <div className="relative flex flex-col gap-0">
-                        {/* Vertical connecting line */}
-                        <div className={`absolute left-[18px] top-4 bottom-4 w-px ${isDarkMode ? 'bg-white/10' : 'bg-slate-200'}`} />
+                    {/* TIMELINE SCROLL AREA */}
+                    <div
+                      className="px-4 pt-4 pb-4 max-h-[26rem] overflow-y-auto"
+                      style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
+                    >
+                      {logs.length === 0 ? (
+                        <div className="flex flex-col items-center gap-3 py-8 opacity-40">
+                          <Activity size={28} />
+                          <p className="text-xs font-bold uppercase tracking-widest">Chưa có hoạt động nào</p>
+                        </div>
+                      ) : (
+                        <div className="relative flex flex-col gap-0">
+                          {/* Vertical connecting line - Căn giữa tuyệt đối (Padding 8px + bán kính 16px) */}
+                          <div className={`absolute left-[24px] top-[32px] bottom-[32px] w-px border-l border-dashed transition-colors duration-1000
+                          ${isDarkMode ? 'border-white/10' : 'border-slate-200'}`}
+                          />
 
-                        {logs.map((log, idx) => {
-                          // Resolve icon + color per log type
-                          const typeMap = {
-                            dry: { Icon: Flame, color: 'text-orange-400', bg: isDarkMode ? 'bg-orange-500/15 border-orange-500/25' : 'bg-orange-50 border-orange-200', glow: 'shadow-[0_0_10px_rgba(249,115,22,0.45)]' },
-                            cool: { Icon: Wind, color: 'text-cyan-400', bg: isDarkMode ? 'bg-cyan-500/15 border-cyan-500/25' : 'bg-cyan-50 border-cyan-200', glow: 'shadow-[0_0_10px_rgba(34,211,238,0.45)]' },
-                            dehumidify: { Icon: Droplets, color: 'text-blue-400', bg: isDarkMode ? 'bg-blue-500/15 border-blue-500/25' : 'bg-blue-50 border-blue-200', glow: 'shadow-[0_0_10px_rgba(59,130,246,0.45)]' },
-                            error: { Icon: AlertTriangle, color: 'text-red-400', bg: isDarkMode ? 'bg-red-500/15 border-red-500/25' : 'bg-red-50 border-red-200', glow: 'shadow-[0_0_10px_rgba(239,68,68,0.45)]' },
-                            info: { Icon: Info, color: isDarkMode ? 'text-slate-300' : 'text-slate-500', bg: isDarkMode ? 'bg-white/8 border-white/10' : 'bg-slate-50 border-slate-200', glow: '' },
-                          };
-                          const entry = typeMap[log.type] || typeMap.info;
-                          const { Icon, color, bg, glow } = entry;
-                          const isLast = idx === logs.length - 1;
+                          {logs.map((log, idx) => {
+                            // Resolve icon + color per log type
+                            const typeMap = {
+                              mode_dry: { Icon: Flame, color: 'text-orange-400', bg: isDarkMode ? 'bg-orange-500/15 border-orange-500/25' : 'bg-orange-50 border-orange-200', glow: 'shadow-[0_0_15px_rgba(249,115,22,0.3)]' },
+                              mode_cool: { Icon: Wind, color: 'text-cyan-400', bg: isDarkMode ? 'bg-cyan-500/15 border-cyan-500/25' : 'bg-cyan-50 border-cyan-200', glow: 'shadow-[0_0_15px_rgba(34,211,238,0.3)]' },
+                              mode_dehumidify: { Icon: Wind, color: 'text-cyan-400', bg: isDarkMode ? 'bg-cyan-500/15 border-cyan-500/25' : 'bg-cyan-50 border-cyan-200', glow: 'shadow-[0_0_15px_rgba(34,211,238,0.3)]' },
+                              mode_standby: { Icon: Activity, color: 'text-emerald-400', bg: isDarkMode ? 'bg-emerald-500/15 border-emerald-500/25' : 'bg-emerald-50 border-emerald-200', glow: 'shadow-[0_0_15px_rgba(52,211,153,0.3)]' },
+                              fan_on: { Icon: Fan, color: 'text-cyan-400', bg: isDarkMode ? 'bg-cyan-500/15 border-cyan-500/25' : 'bg-cyan-50 border-cyan-200', glow: 'shadow-[0_0_15px_rgba(34,211,238,0.3)]' },
+                              fan_off: { Icon: Fan, color: 'text-slate-400', bg: isDarkMode ? 'bg-white/8 border-white/10' : 'bg-slate-50 border-slate-200', glow: '' },
+                              heater_on: { Icon: ThermometerSun, color: 'text-orange-500', bg: isDarkMode ? 'bg-orange-500/15 border-orange-500/25' : 'bg-orange-50 border-orange-200', glow: 'shadow-[0_0_15px_rgba(249,115,22,0.3)]' },
+                              heater_off: { Icon: ThermometerSun, color: 'text-slate-400', bg: isDarkMode ? 'bg-white/8 border-white/10' : 'bg-slate-50 border-slate-200', glow: '' },
+                              door_in_open: { Icon: DoorOpen, color: 'text-emerald-400', bg: isDarkMode ? 'bg-emerald-500/15 border-emerald-500/25' : 'bg-emerald-50 border-emerald-200', glow: 'shadow-[0_0_15px_rgba(52,211,153,0.3)]' },
+                              door_in_closed: { Icon: DoorClosed, color: 'text-red-400', bg: isDarkMode ? 'bg-red-500/15 border-red-500/25' : 'bg-red-50 border-red-200', glow: 'shadow-[0_0_15_rgba(239,68,68,0.3)]' },
+                              door_out_open: { Icon: DoorOpen, color: 'text-emerald-400', bg: isDarkMode ? 'bg-emerald-500/15 border-emerald-500/25' : 'bg-emerald-50 border-emerald-200', glow: 'shadow-[0_0_15px_rgba(52,211,153,0.3)]' },
+                              door_out_closed: { Icon: DoorClosed, color: 'text-red-400', bg: isDarkMode ? 'bg-red-500/15 border-red-500/25' : 'bg-red-50 border-red-200', glow: 'shadow-[0_0_15px_rgba(239,68,68,0.3)]' },
+                              error: { Icon: AlertTriangle, color: 'text-red-400', bg: isDarkMode ? 'bg-red-500/15 border-red-500/25' : 'bg-red-50 border-red-200', glow: 'shadow-[0_0_15px_rgba(239,68,68,0.3)]' },
+                              warning: { Icon: Flame, color: 'text-rose-500', bg: isDarkMode ? 'bg-rose-500/15 border-rose-500/25' : 'bg-rose-50 border-rose-200', glow: 'shadow-[0_0_15px_rgba(244,63,94,0.3)]' },
+                              info: { Icon: Info, color: isDarkMode ? 'text-slate-300' : 'text-slate-500', bg: isDarkMode ? 'bg-white/8 border-white/10' : 'bg-slate-100 border-slate-200', glow: '' },
+                            };
+                            const entry = typeMap[log.type] || typeMap.info;
+                            const { Icon, color, bg, glow } = entry;
 
-                          return (
-                            <div
-                              key={log.id || idx}
-                              className={`relative flex items-start gap-4 py-3 px-1 rounded-xl transition-all duration-200 cursor-default group/item
-                                ${isDarkMode ? 'hover:bg-white/5' : 'hover:bg-slate-50/80'}`}
-                            >
-                              {/* Icon node */}
-                              <div className={`relative z-10 flex-shrink-0 w-9 h-9 rounded-full border flex items-center justify-center transition-all duration-300 ${bg} ${glow} group-hover/item:scale-110`}>
-                                <Icon size={15} className={color} />
+                            return (
+                              <div
+                                key={log.id || idx}
+                                className={`relative flex items-start gap-5 py-4 px-2 rounded-2xl transition-all duration-300 cursor-default group/item
+                                ${isDarkMode ? 'hover:bg-white/[0.03]' : 'hover:bg-slate-50'}`}
+                              >
+                                {/* Icon node - Nâng cấp hiệu ứng hover */}
+                                <div className={`relative z-10 flex-shrink-0 w-8 h-8 rounded-full border flex items-center justify-center transition-all duration-500 ${bg} ${glow} group-hover/item:scale-110 group-hover/item:rotate-[10deg]`}>
+                                  <Icon size={14} className={`${color} transition-transform duration-500`} />
+                                </div>
+
+                                {/* Content - Cải thiện typography */}
+                                <div className="flex-1 min-w-0 pt-0.5">
+                                  <div className="flex justify-between items-start gap-2">
+                                    <p className={`text-[11px] font-black leading-tight ${isDarkMode ? 'text-white' : 'text-slate-800'} group-hover/item:text-indigo-400 transition-colors duration-300`}>
+                                      {log.title}
+                                    </p>
+                                    <p className={`text-[8px] font-mono font-bold tracking-tighter opacity-40 whitespace-nowrap mt-0.5 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                                      {log.time}
+                                    </p>
+                                  </div>
+                                  <p className={`text-[10px] mt-1 leading-relaxed font-medium ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                                    {log.message}
+                                  </p>
+                                </div>
                               </div>
-
-                              {/* Content */}
-                              <div className="flex-1 min-w-0 pt-0.5">
-                                <p className={`text-[11px] font-black leading-snug truncate ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>
-                                  {log.title}
-                                </p>
-                                <p className={`text-[10px] mt-0.5 leading-relaxed ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
-                                  {log.message}
-                                </p>
-                                <p className={`text-[9px] mt-1 font-mono tracking-wider ${isDarkMode ? 'text-slate-600' : 'text-slate-400'}`}>
-                                  {log.time}
-                                </p>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
               )}
@@ -380,7 +432,7 @@ function App() {
               <PremiumInteractiveCard label="Nhiệt Độ" value={data.NhietDo} unit="°C" type="temp" isDark={isDarkMode} />
               <PremiumInteractiveCard label="Độ Ẩm" value={data.DoAm} unit="%" type="hum" isDark={isDarkMode} />
             </div>
-            <SmartInsightsRow data={data} isDark={isDarkMode} />
+            <SmartInsightsRow data={data} isDark={isDarkMode} history={history} />
             <PremiumChartCard history={history} isDark={isDarkMode} />
           </div>
         )}
@@ -583,6 +635,121 @@ function PremiumInteractiveCard({ label, value, unit, type, isDark }) {
 // ==========================================
 // COMPONENT 1.5: SMART INSIGHTS (COMPACT + PREMIUM)
 // ==========================================
+const AI_HISTORY_PATH = import.meta.env.VITE_HUMIDITY_HISTORY_PATH || 'DryBox/HumidityHistory';
+const AI_HUMIDITY_CALL_THRESHOLD = 0.3;
+
+function pickNumber(...values) {
+  for (const value of values) {
+    const next = Number(value);
+    if (Number.isFinite(next)) return next;
+  }
+  return null;
+}
+
+// Component: Status Dot với hiệu ứng nhấp nháy
+function StatusDot({ status }) {
+  const statusConfig = {
+    safe: { bg: 'bg-green-500', ring: 'ring-green-500' },
+    warning: { bg: 'bg-yellow-500', ring: 'ring-yellow-500' },
+    danger: { bg: 'bg-red-500', ring: 'ring-red-500' }
+  };
+
+  const config = statusConfig[status] || statusConfig.safe;
+
+  return (
+    <div className="relative inline-block">
+      {/* Outer ring with ping animation */}
+      <div className={`absolute inset-0 rounded-full ${config.bg} opacity-75 animate-ping`}></div>
+      {/* Core dot */}
+      <div className={`relative w-2 h-2 rounded-full ${config.bg} shadow-lg`}></div>
+    </div>
+  );
+}
+
+// Parse status từ dòng đầu tiên của dự báo (dựa vào text: "An toàn", "Cần chú ý", "Nguy hiểm")
+function extractStatusFromPrediction(text) {
+  if (!text) return 'safe';
+  const firstLine = text.split('\n')[0].toLowerCase();
+  if (firstLine.includes('nguy hiểm')) return 'danger';
+  if (firstLine.includes('cần chú ý')) return 'warning';
+  if (firstLine.includes('an toàn')) return 'safe';
+  return 'safe';
+}
+
+function normalizeHumidityHistoryEntry(key, value) {
+  const humidity = pickNumber(value?.humidity, value?.DoAm, value?.hum, value?.value, value);
+  const temperature = pickNumber(value?.temperature, value?.NhietDo, value?.temp);
+  const timestampValue = pickNumber(value?.timestamp, value?.time, value?.createdAt, value?.ts, key);
+  if (humidity === null || timestampValue === null) return null;
+
+  return {
+    humidity,
+    temperature,
+    timestamp: timestampValue < 10_000_000_000 ? timestampValue * 1000 : timestampValue
+  };
+}
+
+// System prompt để hướng dẫn Gemma phân tích dữ liệu Smart Dry Box
+const GEMMA_SYSTEM_PROMPT = `Bạn là chuyên gia bảo quản thiết bị quang học. Trả lời SIÊU NGẮN (tối đa 2 dòng):
+
+Dòng 1: [Trạng thái: An toàn / Cần chú ý / Nguy hiểm] + 1 nhận xét ngắn
+Dòng 2: [Dự báo + 1 mẹo]
+
+Ví dụ:
+Cần chú ý - độ ẩm tăng 0.36%/h
+~6 giờ nữa chạm 50% | Hạn chế mở tủ khi phòng ẩm`;
+
+function buildGemmaHumidityPrompt({ temp, humidity, historyData }) {
+  if (historyData.length < 2) {
+    return `Độ ẩm: ${humidity}%, nhiệt độ: ${temp}°C. Chưa có lịch sử. Đánh giá trạng thái (An toàn/Cần chú ý/Nguy hiểm) + 1 mẹo.`;
+  }
+
+  const trendHumidity = historyData[historyData.length - 1].humidity - historyData[0].humidity;
+  const timeSpanHours = (historyData[historyData.length - 1].timestamp - historyData[0].timestamp) / 3600000;
+  const ratePerHour = timeSpanHours > 0 ? trendHumidity / timeSpanHours : 0;
+
+  return `Độ ẩm: ${humidity}%, tốc độ: ${ratePerHour.toFixed(2)}%/h. Dự báo khi chạm 50% + 1 mẹo ngắn.`;
+}
+
+async function callGemmaHumidityPrediction({ humidity, historyData }) {
+  if (!historyData || historyData.length < 2) {
+    return { ratePerHour: 0, hoursToThreshold: null, text: "Đang thu thập thêm dữ liệu để phân tích xu hướng..." };
+  }
+
+  const latest = historyData[historyData.length - 1];
+  const oldest = historyData[0];
+  const deltaHum = latest.humidity - oldest.humidity;
+  const deltaTimeMs = latest.timestamp - oldest.timestamp;
+
+  if (deltaTimeMs <= 0) {
+    return { ratePerHour: 0, hoursToThreshold: null, text: "Đang quan sát biến động độ ẩm..." };
+  }
+
+  const ratePerHour = deltaHum / (deltaTimeMs / 3600000);
+  const isStable = Math.abs(ratePerHour) < 0.1;
+
+  let trendText = "";
+  if (isStable) {
+    if (humidity <= 50) {
+      trendText = "Trạng thái lý tưởng: Độ ẩm duy trì ổn định trong vùng an toàn, bảo vệ tối ưu cho cảm biến và ống kính.";
+    } else {
+      trendText = "Lưu ý: Độ ẩm đang cao nhưng không giảm, hãy kiểm tra độ kín của tủ hoặc trạng thái hạt hút ẩm.";
+    }
+  } else if (ratePerHour > 0) {
+    trendText = `Xu hướng tăng (${ratePerHour.toFixed(2)}%/giờ): Có dấu hiệu xâm nhập hơi ẩm từ bên ngoài. Hãy hạn chế mở tủ lúc này.`;
+  } else {
+    trendText = `Xu hướng giảm (${Math.abs(ratePerHour).toFixed(2)}%/giờ): Hệ thống đang rút ẩm hiệu quả, đưa thiết bị về vùng bảo quản tối ưu.`;
+  }
+
+  // Dự báo mốc 50% nếu đang tăng rõ rệt
+  if (ratePerHour > 0.05 && humidity < 50) {
+    const hoursToThreshold = (50 - humidity) / ratePerHour;
+    return { ratePerHour, hoursToThreshold, text: trendText };
+  }
+
+  return { ratePerHour, hoursToThreshold: null, text: trendText };
+}
+
 function SmartInsightsRow({ data, isDark }) {
   const temp = Number(data?.NhietDo) || 0;
   const hum = Number(data?.DoAm) || 0;
@@ -594,6 +761,13 @@ function SmartInsightsRow({ data, isDark }) {
   const [animateInsight, setAnimateInsight] = useState(false);
   const [aiStatus, setAiStatus] = useState('waiting');
   const [lastAiUpdatedAt, setLastAiUpdatedAt] = useState(null);
+  const [humidityPrediction, setHumidityPrediction] = useState({
+    status: 'idle',
+    text: '',
+    updatedAt: null,
+    error: ''
+  });
+  const lastAiHumidityRef = useRef(null);
 
   const TEMP_MIN = 24;
   const TEMP_MAX = 28;
@@ -602,41 +776,41 @@ function SmartInsightsRow({ data, isDark }) {
 
   const insights = [];
 
-  if (temp > TEMP_MAX + 2) {
-    insights.push({ kind: 'temp', title: 'Nhiệt độ', text: `đang cao hơn vùng mục tiêu ${(temp - TEMP_MAX).toFixed(1)}°C` });
-  } else if (temp > TEMP_MAX) {
-    insights.push({ kind: 'temp', title: 'Nhiệt độ', text: `hơi cao hơn vùng lưu trữ lý tưởng` });
-  } else if (temp < TEMP_MIN - 2) {
-    insights.push({ kind: 'temp', title: 'Nhiệt độ', text: `đang thấp hơn vùng mục tiêu ${(TEMP_MIN - temp).toFixed(1)}°C` });
-  } else if (temp < TEMP_MIN) {
-    insights.push({ kind: 'temp', title: 'Nhiệt độ', text: `thấp nhẹ so với vùng lưu trữ lý tưởng` });
-  } else {
-    insights.push({ kind: 'ok', title: 'Nhiệt độ', text: 'đang trong vùng tối ưu' });
-  }
 
-  if (hum > HUM_MAX + 6) {
-    insights.push({ kind: 'hum', title: 'Độ ẩm', text: `cao vượt vùng tối ưu ${(hum - HUM_MAX).toFixed(0)}%` });
-  } else if (hum > HUM_MAX) {
-    insights.push({ kind: 'hum', title: 'Độ ẩm', text: `cao nhẹ hơn vùng mục tiêu` });
-  } else if (hum < HUM_MIN - 8) {
-    insights.push({ kind: 'hum', title: 'Độ ẩm', text: `thấp hơn vùng tối ưu ${(HUM_MIN - hum).toFixed(0)}%` });
-  } else if (hum < HUM_MIN) {
-    insights.push({ kind: 'hum', title: 'Độ ẩm', text: `thấp nhẹ hơn vùng mục tiêu` });
-  } else {
-    insights.push({ kind: 'ok', title: 'Độ ẩm', text: 'đang cân bằng tốt' });
-  }
+  const getTempText = () => {
+    if (temp > TEMP_MAX + 2) return `Đang cao hơn vùng mục tiêu ${(temp - TEMP_MAX).toFixed(1)}°C`;
+    if (temp > TEMP_MAX) return "Hơi ấm, đang vượt nhẹ ngưỡng lý tưởng";
+    if (temp < TEMP_MIN - 2) return `Đang thấp hơn vùng mục tiêu ${(TEMP_MIN - temp).toFixed(1)}°C`;
+    if (temp < TEMP_MIN) return "Hơi lạnh, dưới vùng ổn định nhẹ";
+    const variants = ["Nhiệt độ rất ổn định", "Đang ở mức nhiệt lý tưởng", "Duy trì vùng nhiệt tối ưu", "Mức nhiệt hoàn hảo cho thiết bị"];
+    return variants[Math.floor(temp * 10) % variants.length];
+  };
+
+  const getHumText = () => {
+    if (hum > HUM_MAX + 6) return `Vượt ngưỡng ẩm an toàn ${(hum - HUM_MAX).toFixed(0)}%`;
+    if (hum > HUM_MAX) return "Hơi ẩm, đang trên vùng mục tiêu";
+    if (hum < HUM_MIN - 8) return `Cực khô, dưới vùng tối ưu ${(HUM_MIN - hum).toFixed(0)}%`;
+    if (hum < HUM_MIN) return "Hơi khô, dưới ngưỡng lý tưởng nhẹ";
+    const variants = ["Đang cân bằng trong vùng vàng", "Độ ẩm cực kỳ lý tưởng", "Duy trì độ ẩm rất tốt", "Mức ẩm hoàn hảo để bảo quản"];
+    return variants[Math.floor(hum * 10) % variants.length];
+  };
+
+  const localTemperatureText = getTempText();
+  const localHumidityText = getHumText();
 
   const localSummary = (() => {
     const tempInRange = temp >= TEMP_MIN && temp <= TEMP_MAX;
     const humInRange = hum >= HUM_MIN && hum <= HUM_MAX;
+
     if (tempInRange && humInRange) {
-      return 'Điều kiện đang trong vùng mục tiêu, dao động nhỏ theo thời gian thực.';
+      return 'Nhiệt độ và độ ẩm hiện ổn định, hệ thống đang quan sát thêm để làm rõ xu hướng.';
     }
-    return 'Điều kiện môi trường đang dao động và chưa ổn định hoàn toàn.';
+    if (!humInRange) {
+      return 'Độ ẩm đang có sự thay đổi, hệ thống tập trung theo dõi các thông số để xác nhận trạng thái.';
+    }
+    return 'Nhiệt độ đang dao động, hệ thống tiếp tục giám sát môi trường để xác nhận xu hướng ổn định.';
   })();
 
-  const localTemperatureText = insights[0]?.text || 'đang cập nhật...';
-  const localHumidityText = insights[1]?.text || 'đang cập nhật...';
   const hasInsightData = Boolean(
     insightData?.temperature?.trim() &&
     insightData?.humidity?.trim() &&
@@ -695,6 +869,90 @@ function SmartInsightsRow({ data, isDark }) {
   }, []);
 
   useEffect(() => {
+    if (!Number.isFinite(hum) || hum <= 0) return;
+    if (
+      lastAiHumidityRef.current !== null &&
+      Math.abs(hum - lastAiHumidityRef.current) <= AI_HUMIDITY_CALL_THRESHOLD
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      setHumidityPrediction((prev) => ({
+        ...prev,
+        status: 'thinking',
+        error: ''
+      }));
+
+      try {
+        // Ưu tiên lấy dữ liệu từ Firebase, nếu không có thì dùng local history để tính nhanh xu hướng
+        let historyData = [];
+        try {
+          const historySnapshot = await get(query(ref(database, AI_HISTORY_PATH), orderByChild('timestamp'), limitToLast(100)));
+          const rawHistory = historySnapshot.val();
+          if (rawHistory) {
+            historyData = Object.entries(rawHistory)
+              .map(([key, value]) => normalizeHumidityHistoryEntry(key, value))
+              .filter(Boolean)
+              .sort((a, b) => a.timestamp - b.timestamp);
+          }
+        } catch (e) { console.warn("Không thể lấy history từ Firebase, dùng local history"); }
+
+        // Fallback sang local history nếu Firebase trống
+        if (historyData.length < 2 && history && history.length >= 2) {
+          historyData = history.map(h => ({
+            humidity: h.hum,
+            temperature: h.temp,
+            timestamp: h.timestamp || Date.now()
+          })).filter(h => h.humidity !== undefined && h.timestamp !== undefined);
+        }
+
+        const result = await callGemmaHumidityPrediction({
+          temp: Number(temp.toFixed(1)),
+          humidity: Number(hum.toFixed(1)),
+          historyData
+        });
+
+        if (cancelled) return;
+        lastAiHumidityRef.current = hum;
+
+        let finalStatus = 'ready';
+        let finalText = result.text;
+
+        if (result.text.includes("thu thập thêm")) {
+          finalStatus = 'waiting';
+          finalText = localSummary;
+        } else if (result.hoursToThreshold !== null) {
+          finalText += ` Dự báo chạm 50% sau ~${result.hoursToThreshold.toFixed(1)}h.`;
+        }
+
+        setHumidityPrediction({
+          status: finalStatus,
+          text: finalText,
+          updatedAt: Date.now(),
+          error: ''
+        });
+      } catch (predictionError) {
+        console.error('Không thể tạo dự báo độ ẩm bằng Gemma:', predictionError);
+        if (cancelled) return;
+        lastAiHumidityRef.current = hum;
+        setHumidityPrediction({
+          status: 'fallback',
+          text: 'Chưa đủ dữ liệu lịch sử để dự báo chính xác. Tạm thời giữ máy ảnh Olympus và linh kiện điện tử trong vùng 40-50%, hạn chế mở tủ lâu khi phòng đang ẩm.',
+          updatedAt: Date.now(),
+          error: predictionError.message
+        });
+      }
+    }, 0);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [hum, temp]);
+
+  useEffect(() => {
     setAnimateInsight(true);
     const timer = setTimeout(() => setAnimateInsight(false), 650);
     return () => clearTimeout(timer);
@@ -738,6 +996,20 @@ function SmartInsightsRow({ data, isDark }) {
   const statusHint = isAiOnline
     ? 'Đồng bộ phân tích tự động từ Cloud Functions'
     : (resolvedAiStatus === 'error' ? 'Lỗi đọc dữ liệu AI từ Realtime Database' : 'Đang chờ backend ghi dữ liệu AI');
+  const isPredictionThinking = humidityPrediction.status === 'thinking';
+  const predictionSummaryText = isPredictionThinking
+    ? 'Gemini đang tính tốc độ tăng độ ẩm và mốc chạm 50%...'
+    : (humidityPrediction.text || displayedSummaryText);
+  const predictionBadgeLabel = humidityPrediction.status === 'ready'
+    ? 'GEMINI'
+    : humidityPrediction.status === 'fallback'
+      ? 'DỰ PHÒNG'
+      : humidityPrediction.status === 'thinking'
+        ? 'ĐANG TÍNH'
+        : humidityPrediction.status === 'waiting'
+          ? 'GIÁM SÁT'
+          : 'DỰ BÁO';
+  const predictionTimeLabel = humidityPrediction.status === 'ready' ? 'Dự báo' : 'Cập nhật';
   const lastAiUpdatedLabel = lastAiUpdatedAt
     ? new Date(lastAiUpdatedAt).toLocaleTimeString('vi-VN', {
       hour: '2-digit',
@@ -762,7 +1034,10 @@ function SmartInsightsRow({ data, isDark }) {
       <div className="relative z-10 px-5 sm:px-7 py-4 sm:py-5">
         <div className="flex items-center justify-between gap-4 mb-2">
           <div className="flex items-center gap-2">
-            <div className={`w-2 h-2 rounded-full ${isDark ? 'bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.6)]' : 'bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.25)]'}`} />
+            <div className="relative flex items-center justify-center">
+              <div className={`absolute inset-0 rounded-full animate-ping opacity-75 ${isDark ? 'bg-emerald-400' : 'bg-emerald-500'}`} />
+              <div className={`relative w-2 h-2 rounded-full ${isDark ? 'bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.6)]' : 'bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.25)]'}`} />
+            </div>
             <p className={`text-[10px] font-black uppercase tracking-[0.45em] ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>PHÂN TÍCH NHANH</p>
           </div>
           <div className="flex items-center gap-2">
@@ -773,12 +1048,14 @@ function SmartInsightsRow({ data, isDark }) {
         </div>
 
         <div className="flex flex-wrap items-center gap-2 mb-3">
-          <span className={`text-[10px] px-2.5 py-1 rounded-full border font-medium ${isDark ? 'bg-white/5 border-white/10 text-slate-300' : 'bg-white border-slate-200 text-slate-600'}`}>
-            {statusHint}
-          </span>
           {isAiOnline && lastAiUpdatedLabel && (
             <span className={`text-[10px] px-2.5 py-1 rounded-full border font-mono ${isDark ? 'bg-emerald-500/10 border-emerald-400/20 text-emerald-300/90' : 'bg-emerald-50 border-emerald-200 text-emerald-700'}`}>
               AI cập nhật: {lastAiUpdatedLabel}
+            </span>
+          )}
+          {humidityPrediction.updatedAt && (
+            <span className={`text-[10px] px-2.5 py-1 rounded-full border font-mono ${isDark ? 'bg-cyan-500/10 border-cyan-400/20 text-cyan-300/90' : 'bg-indigo-50 border-indigo-200 text-indigo-700'}`}>
+              {predictionTimeLabel}: {new Date(humidityPrediction.updatedAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
             </span>
           )}
         </div>
@@ -786,7 +1063,7 @@ function SmartInsightsRow({ data, isDark }) {
         <div className={`grid grid-cols-1 md:grid-cols-3 gap-3 transition-all duration-500 ${animateInsight ? 'opacity-100 translate-y-0' : 'opacity-90'}`}>
           <div
             className={`rounded-2xl border bg-gradient-to-br px-4 py-3 transition-all duration-500
-              ${accentClass(insights[0]?.kind || 'ok')}
+              ${accentClass('temp')}
               ${isDark ? 'shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] md:hover:shadow-[0_0_20px_rgba(56,189,248,0.2)]' : 'shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] md:hover:shadow-[0_8px_22px_rgba(14,116,144,0.14)]'}
               ${animateInsight ? 'translate-y-0' : 'translate-y-0.5'} md:hover:-translate-y-0.5`}
           >
@@ -812,9 +1089,21 @@ function SmartInsightsRow({ data, isDark }) {
               ${isDark ? 'shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] md:hover:shadow-[0_0_20px_rgba(16,185,129,0.2)]' : 'shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] md:hover:shadow-[0_8px_22px_rgba(5,150,105,0.14)]'}
               ${animateInsight ? 'translate-y-0' : 'translate-y-0.5'} md:hover:-translate-y-0.5`}
           >
-            <p className={`text-[10px] font-black uppercase tracking-widest opacity-70 ${isDark ? 'text-slate-300' : 'text-slate-600'}`}>Tổng quan</p>
-            <p className={`text-[12px] sm:text-[13px] font-bold leading-snug mt-1 ${isDark ? 'text-white' : 'text-slate-800'}`}>
-              {displayedSummaryText}
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <p className={`text-[10px] font-black uppercase tracking-widest opacity-70 ${isDark ? 'text-slate-300' : 'text-slate-600'}`}>
+                  {humidityPrediction.status === 'ready' ? 'DỰ ĐOÁN' : 'Tổng quan'}
+                </p>
+              </div>
+              <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[8px] font-black uppercase tracking-wider ${humidityPrediction.status === 'ready'
+                ? isDark ? 'border-cyan-400/30 bg-cyan-400/10 text-cyan-300' : 'border-indigo-200 bg-indigo-50 text-indigo-700'
+                : isDark ? 'border-white/10 bg-white/5 text-slate-300' : 'border-slate-200 bg-white/70 text-slate-600'
+                }`}>
+                {predictionBadgeLabel}
+              </span>
+            </div>
+            <p className={`text-[12px] sm:text-[13px] font-bold leading-snug mt-2 ${isDark ? 'text-white' : 'text-slate-800'} ${isPredictionThinking ? 'animate-pulse' : ''}`}>
+              {predictionSummaryText}
             </p>
           </div>
         </div>
@@ -1284,3 +1573,4 @@ const SunIcon = ({ size }) => <svg width={size} height={size} viewBox="0 0 24 24
 const MoonIcon = ({ size }) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" /></svg>;
 
 export default App;
+

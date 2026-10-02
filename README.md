@@ -1,44 +1,16 @@
-# 📦 Smart Dry Box Dashboard
+# React + Vite
 
-Một chiếc Web Dashboard nhỏ xinh dùng để theo dõi nhiệt độ và độ ẩm của tủ chống ẩm cá nhân (bảo vệ máy ảnh, linh kiện điện tử,...). 
+This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 
-Dự án này được build chủ yếu để vọc vạch kết nối phần cứng với web, và đặc biệt là code được "vibe" (prompt) ra với sự trợ giúp nhiệt tình từ AI chứ không gõ tay 100% đâu nha :V.
+Currently, two official plugins are available:
 
-## ✨ Cái web này làm được gì?
-* **Realtime:** Hiển thị thông số Nhiệt độ & Độ ẩm theo thời gian thực (đẩy từ mạch lên Firebase).
-* **Biểu đồ:** Vẽ chart lịch sử môi trường siêu mượt bằng Recharts.
-* **Giao diện:** Chơi hệ kính mờ (Glassmorphism) nhìn cho xịn, có nút gạt Dark/Light Mode đổi màu theo tâm trạng.
-* **Tích hợp AI:** Lâu lâu nhờ Gemini đọc data rồi "phán" vài câu xem tình trạng tủ đang ổn hay sắp mốc.
+- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
+- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
 
-## 🛠️ Đồ chơi công nghệ (Tech Stack)
-* **Frontend:** ReactJS + Vite.
-* **Database:** Firebase Realtime Database.
-* **Backend:** Cloud Functions (chạy ngầm).
-* **Khác:** OpenWeather API, Google Gemini API.
+## React Compiler
 
-## 🚀 Cách chạy code trên máy tính (Local)
+The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
 
-Nếu bạn muốn tải về chạy thử, hãy làm theo các bước sau:
+## Expanding the ESLint configuration
 
-1. Clone repo này về máy:
-
-```bash
-git clone https://github.com/Tarnished-B/smart-dry-box-iot.git
-```
-
-2. Cài đặt thư viện:
-
-```bash
-npm install
-```
-
-3. Tạo một file tên là `.env` ở thư mục gốc (ngang hàng với `package.json`) và điền các API Key của bạn vào (Firebase, Weather, Gemini...). *Lưu ý: repo này không chứa API Key thật để bảo mật.*
-
-4. Khởi chạy dự án:
-
-```bash
-npm run dev
-```
-
----
-*Dự án cá nhân vọc vạch cuối tuần. Cảm ơn các bạn đã ghé xem!* ✌️
+If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
