@@ -25,3 +25,4 @@ dist-ssr
 *.sw?
 *.bak
 .kilo/
+firmware/smart_dry_box/secrets.h
