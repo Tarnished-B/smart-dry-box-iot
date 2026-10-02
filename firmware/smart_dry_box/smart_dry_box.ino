@@ -71,7 +71,7 @@ void setup() {
 		myHumidityConnectionStatus = false;
 	}
 	Serial.println("Connected to AHT20");
-	myHumidityConnectionStatus = true; //true là đã kết nối cho biết rằng hộp có thẻ hoạt động (mang lên dashboard)
+	myHumidityConnectionStatus = true;
 
 	WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 	Serial.println("Connecting to Wifi");
