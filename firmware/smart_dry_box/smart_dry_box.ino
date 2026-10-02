@@ -30,9 +30,9 @@ const int fanPin = D5; bool fanState = false;
 unsigned long lastTime_Fan = 0;
 unsigned long timeRange_Fan = 1800000; //tản nhiệt 30p
 
-const int relayPin = D3; bool relayState = false;
-unsigned long lastTime_Relay = 0;
-unsigned long timeRange_Relay = 5400000; //sấy 1.5h
+const int mosfetPin = D3; bool mosfetState = false;
+unsigned long lastTime_Mosfet = 0;
+unsigned long timeRange_Mosfet = 5400000; //sấy 1.5h
 
 unsigned long lastTime_Dehumidification = 0;
 unsigned long timeRange_Dehumidification = 7200000; //hút ẩm 2h
@@ -47,7 +47,7 @@ int boxState = 1;
 void updateValue();
 void sendDataFirebase();
 void useDehumidification();
-int useRelay();
+int useMosfet();
 int useFan();
 
 void setup() {
@@ -58,11 +58,11 @@ void setup() {
 	myServo1.attach(servo1Pin, 500, 2400);
 	myServo2.attach(servo2Pin, 500, 2400);
 
-	pinMode(relayPin, OUTPUT);
+	pinMode(mosfetPin, OUTPUT);
 	pinMode(fanPin, OUTPUT);
 
 	digitalWrite(fanPin, LOW);
-	digitalWrite(relayPin, LOW);
+	digitalWrite(mosfetPin, LOW);
 	myServo1.write(100);
 	myServo2.write(100);
 
@@ -111,10 +111,10 @@ void loop() {
 			myServo2.write(0);
 			servo2State = true; changeFlag = true;
 		}
-		if (useRelay() == 0) {
+		if (useMosfet() == 0) {
 			boxState = 3; changeFlag = true;
 		}
-		remainingTime = (timeRange_Relay - (millis() - lastTime_Relay)) / 1000;
+		remainingTime = (timeRange_Mosfet - (millis() - lastTime_Mosfet)) / 1000;
 	}
 	if (boxState == 3) {
 		if (useFan() == 0) {
@@ -131,7 +131,7 @@ void loop() {
 		FirebaseJson jsonChange;
 		jsonChange.set("Devices/VachNganTrong", servo1State);
 		jsonChange.set("Devices/VachNganNgoai", servo2State);
-		jsonChange.set("Devices/TamHutAm", relayState);
+		jsonChange.set("Devices/TamHutAm", mosfetState);
 		jsonChange.set("Devices/Quat", fanState);
 		Firebase.updateNode(fbdo, "/DryBox", jsonChange);
 		changeFlag = false;
@@ -196,27 +196,27 @@ void useDehumidification() {
 	}
 }
 
-int useRelay() {
-	if (servo1State == false && servo2State == true && fanState == false && relayState == false) {
+int useMosfet() {
+	if (servo1State == false && servo2State == true && fanState == false && mosfetState == false) {
 		analogWrite(fanPin, 20);
 		fanState = true; changeFlag = true;
-		digitalWrite(relayPin, HIGH);
-		relayState = true; changeFlag = true;
-		lastTime_Relay = millis();
+		digitalWrite(mosfetPin, HIGH);
+		mosfetState = true; changeFlag = true;
+		lastTime_Mosfet = millis();
 	}
-	unsigned long currentTime_Relay = millis();
-	if (currentTime_Relay - lastTime_Relay >= timeRange_Relay && relayState == true && fanState == true) {
+	unsigned long currentTime_Mosfet = millis();
+	if (currentTime_Mosfet - lastTime_Mosfet >= timeRange_Mosfet && mosfetState == true && fanState == true) {
 		analogWrite(fanPin, 0);
 		fanState = false; changeFlag = true;
-		digitalWrite(relayPin, LOW);
-		relayState = false; changeFlag = true;
+		digitalWrite(mosfetPin, LOW);
+		mosfetState = false; changeFlag = true;
 		return 0;
 	}
 	return 1;
 }
 
 int useFan() {
-	if (servo1State == false && servo2State == true && relayState == false && fanState == false) {
+	if (servo1State == false && servo2State == true && mosfetState == false && fanState == false) {
 		analogWrite(fanPin, 1023);
 		fanState = true; changeFlag = true;
 		lastTime_Fan = millis();
