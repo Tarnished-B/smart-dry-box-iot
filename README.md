@@ -51,15 +51,15 @@ smart-dry-box-iot/
 | AHT20 | Temperature and humidity sensor (I2C, default `Wire` pins) |
 | 2x servo | Inner and outer air vents |
 | 12 V DC fan | Airflow, PWM-controlled at 25 kHz through one MOSFET |
-| Boost converter (5 V to 12 V) | Supplies the fan from the 5 V rail |
-| Relay | Switches the desiccant-plate heater during regeneration |
+| Boost converter (5V to 12V) | Supplies the fan from the 5V rail |
+| MOSFET Module | Switches the desiccant-plate heater during regeneration |
 
 | Function | Pin |
 |----------|-----|
 | Servo 1 (inner vent) | D6 |
 | Servo 2 (outer vent) | D7 |
 | Fan (PWM, via MOSFET) | D5 |
-| Heater relay | D3 |
+| Heater (via MOSFET) | D3 |
 | I2C (AHT20) | board default SDA/SCL |
 
 ## Firmware
