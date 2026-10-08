@@ -3,7 +3,14 @@
 A DIY smart dry box. An ESP8266 reads temperature and humidity, runs a three-state cycle (dehumidify, regenerate the desiccant plate, cool down) with two servo vents, a PWM fan and a heater output, and publishes its state to Firebase for a web dashboard.
 
 > **Status:** working prototype (firmware V1 + dashboard V1). The firmware uses the Arduino framework with Firebase as the backend. A rewrite on ESP-IDF with a self-hosted local backend is planned.
-
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/a40ec2a9-74ca-4ae5-9f33-8829f0ee1aad" width="480" alt="Dry box"><br>
+  <sub>Smart dry box prototype (ESP8266)</sub>
+</p>
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/78a07cf2-16c3-47e4-815b-b20271fc43af" width="480" alt="Web Dashboard"><br>
+  <sub>Web dashboard</sub>
+</p>
 ## How it works
 
 The firmware is a state machine with three states (`boxState`):
